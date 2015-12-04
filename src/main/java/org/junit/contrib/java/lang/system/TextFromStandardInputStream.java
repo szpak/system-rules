@@ -95,27 +95,26 @@ public class TextFromStandardInputStream extends ExternalResource {
 	/**
 	 * Set the text that is returned by {@code System.in}. You can
 	 * provide multiple texts. In that case {@code System.in.read()}
-	 * returns -1 once when the end of a single text is reached and
-	 * continues with the next text afterwards.
+	 * continues with the next text after a text has been completely
+	 * read.
 	 *
 	 * @param texts a list of texts.
+	 * @deprecated please use {@link #provideLines(String[])}
 	 */
+	@Deprecated
 	public void provideText(String... texts) {
-		systemInMock.provideText(asList(texts));
+		systemInMock.provideText(join(texts));
 	}
 
 	/**
 	 * Set the lines that are returned by {@code System.in}.
 	 * {@code System.getProperty("line.separator")} is used for the end
-	 * of line. {@code System.in.read()} returns -1 once when the end
-	 * of a single line is reached and continues with the next line
-	 * afterwards.
+	 * of line.
 	 *
 	 * @param lines a list of lines.
 	 */
 	public void provideLines(String... lines) {
-		String[] texts = appendEndOfLineToLines(lines);
-		provideText(texts);
+		systemInMock.provideText(joinLines(lines));
 	}
 
 	/**
@@ -148,11 +147,18 @@ public class TextFromStandardInputStream extends ExternalResource {
 		systemInMock.throwExceptionOnInputEnd(exception);
 	}
 
-	private String[] appendEndOfLineToLines(String[] lines) {
-		String[] texts = new String[lines.length];
-		for (int index = 0; index < lines.length; ++index)
-			texts[index] = lines[index] + getProperty("line.separator");
-		return texts;
+	private String join(String[] texts) {
+		StringBuilder sb = new StringBuilder();
+		for (String text: texts)
+			sb.append(text);
+		return sb.toString();
+	}
+
+	private String joinLines(String[] lines) {
+		StringBuilder sb = new StringBuilder();
+		for (String line: lines)
+			sb.append(line).append(getProperty("line.separator"));
+		return sb.toString();
 	}
 
 	@Override
@@ -167,14 +173,12 @@ public class TextFromStandardInputStream extends ExternalResource {
 	}
 
 	private static class SystemInMock extends InputStream {
-		private Iterator<String> texts;
 		private StringReader currentReader;
 		private IOException ioException;
 		private RuntimeException runtimeException;
 
-		void provideText(List<String> texts) {
-			this.texts = texts.iterator();
-			updateReader();
+		void provideText(String text) {
+			currentReader = new StringReader(text);
 		}
 
 		void throwExceptionOnInputEnd(IOException exception) {
@@ -203,18 +207,41 @@ public class TextFromStandardInputStream extends ExternalResource {
 			return character;
 		}
 
+		@Override
+		public int read(byte[] b, int offset, int len) throws IOException {
+			if (b == null)
+				throw new NullPointerException();
+			else if (offset < 0 || len < 0 || len > b.length - offset)
+				throw new IndexOutOfBoundsException();
+			else if (len == 0)
+				return 0;
+			else
+				return readUntilNextLineBreak(b, offset, len);
+		}
+
+		private int readUntilNextLineBreak(byte[] b, int offset, int len) throws IOException {
+			int c = read();
+			if (c == -1) {
+				return -1;
+			}
+			b[offset] = (byte) c;
+
+			int i = 1;
+			for (; (i < len) && (b[i - 1] != (byte) '\n'); ++i) {
+				byte read = (byte) read();
+				if (read == -1)
+					break;
+				else
+					b[offset + i] = read;
+			}
+			return i;
+		}
+
 		private void handleEmptyReader() throws IOException {
-			if (texts.hasNext())
-				updateReader();
-			else if (ioException != null)
+			if (ioException != null)
 				throw ioException;
 			else if (runtimeException != null)
 				throw runtimeException;
-		}
-
-		private void updateReader() {
-			if (texts.hasNext())
-				currentReader = new StringReader(texts.next());
 		}
 	}
 }
